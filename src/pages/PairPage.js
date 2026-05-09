@@ -1,8 +1,10 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { doc, setDoc, getDoc } from 'firebase/firestore';
 import { db } from '../firebase';
 import ParamRow from '../components/ParamRow';
 import { makeRow, makeDefaultRows, TIMEFRAMES, TF_SECONDS } from '../utils';
+
+const SERVER_WS = process.env.REACT_APP_SERVER_WS || 'ws://localhost:3001';
 
 const S = {
   page: { minHeight: '100vh', background: 'var(--bg)' },
@@ -27,15 +29,20 @@ const S = {
     marginBottom: '1rem', flexWrap: 'wrap',
   },
   priceLabel: { fontSize: '10px', color: 'var(--text3)', fontFamily: 'var(--font-mono)', marginBottom: '2px' },
-  priceVal: { fontSize: '16px', fontWeight: 700, color: 'var(--text)', fontFamily: 'var(--font-mono)', letterSpacing: '-0.02em' },
-  priceGreen: { fontSize: '13px', fontWeight: 600, color: 'var(--green)', fontFamily: 'var(--font-mono)' },
-  priceRed: { fontSize: '13px', fontWeight: 600, color: 'var(--red)', fontFamily: 'var(--font-mono)' },
+  priceGreen: { fontSize: '20px', fontWeight: 700, color: 'var(--green)', fontFamily: 'var(--font-mono)' },
+  priceRed: { fontSize: '20px', fontWeight: 700, color: 'var(--red)', fontFamily: 'var(--font-mono)' },
+  question: { fontSize: '11px', color: 'var(--text3)', fontFamily: 'var(--font-mono)', marginLeft: 'auto', maxWidth: '200px', textAlign: 'right' },
   liveDot: {
     width: '7px', height: '7px', borderRadius: '50%',
     background: 'var(--green)', display: 'inline-block',
     animation: 'pulse-dot 2s infinite', marginRight: '5px',
   },
+  offlineDot: {
+    width: '7px', height: '7px', borderRadius: '50%',
+    background: '#888', display: 'inline-block', marginRight: '5px',
+  },
   liveText: { fontSize: '11px', color: 'var(--green)', fontFamily: 'var(--font-mono)', display: 'flex', alignItems: 'center' },
+  offlineText: { fontSize: '11px', color: '#888', fontFamily: 'var(--font-mono)', display: 'flex', alignItems: 'center' },
   statsGrid: {
     display: 'grid',
     gridTemplateColumns: 'repeat(auto-fill, minmax(120px, 1fr))',
@@ -62,17 +69,17 @@ const S = {
     fontFamily: 'var(--font-display)',
   },
   tfHint: { fontSize: '11px', color: 'var(--text3)', fontFamily: 'var(--font-mono)', marginLeft: 'auto' },
-  tableWrap: {
-    background: 'var(--bg2)', border: '1px solid var(--border)',
-    borderRadius: '14px', overflowX: 'auto', marginBottom: '8px',
+  cardsGrid: {
+    display: 'grid',
+    gridTemplateColumns: 'repeat(2, 1fr)',
+    gap: '10px',
+    marginBottom: '8px',
   },
-  table: { width: '100%', borderCollapse: 'collapse', fontSize: '13px' },
-  th: {
-    fontSize: '10px', fontWeight: 500, color: 'var(--text3)',
-    textAlign: 'left', padding: '9px 8px',
-    borderBottom: '1px solid var(--border)',
-    background: 'var(--bg3)', whiteSpace: 'nowrap',
-    fontFamily: 'var(--font-mono)', textTransform: 'uppercase', letterSpacing: '0.05em',
+  cardsMobile: {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '10px',
+    marginBottom: '8px',
   },
   addBtn: {
     width: '100%', padding: '8px',
@@ -85,25 +92,15 @@ const S = {
     textAlign: 'center', padding: '2rem',
     color: 'var(--text3)', fontFamily: 'var(--font-mono)', fontSize: '13px',
   },
+  skeletonPrice: {
+    width: '60px', height: '24px',
+    background: 'var(--bg3)',
+    borderRadius: '6px',
+    animation: 'skeleton-pulse 1.5s ease-in-out infinite',
+  },
 };
 
 const MAX_ROWS = 10;
-
-function useFakePrice() {
-  const [price, setPrice] = useState(94230.5);
-  const [change, setChange] = useState(0);
-  useEffect(() => {
-    const id = setInterval(() => {
-      setPrice(p => {
-        const delta = parseFloat(((Math.random() - 0.5) * 120).toFixed(2));
-        setChange(delta);
-        return parseFloat((p + delta).toFixed(2));
-      });
-    }, 2000);
-    return () => clearInterval(id);
-  }, []);
-  return { price, change };
-}
 
 function useIsMobile() {
   const [isMobile, setIsMobile] = useState(window.innerWidth < 700);
@@ -117,16 +114,87 @@ function useIsMobile() {
 
 export default function PairPage({ pair, user, onBack }) {
   const [activeTf, setActiveTf] = useState('5m');
-  const { price, change } = useFakePrice();
   const isMobile = useIsMobile();
   const [loading, setLoading] = useState(true);
   const [saveStatus, setSaveStatus] = useState({});
+  const wsRef = useRef(null);
+
+  // Keep last known prices in a ref so reconnects don't wipe them
+  const priceCache = useRef({
+    '5m':  { yesPrice: null, noPrice: null, question: null },
+    '15m': { yesPrice: null, noPrice: null, question: null },
+    '1hr': { yesPrice: null, noPrice: null, question: null },
+  });
+
+  const [liveData, setLiveData] = useState({
+    '5m':  { yesPrice: null, noPrice: null, question: null },
+    '15m': { yesPrice: null, noPrice: null, question: null },
+    '1hr': { yesPrice: null, noPrice: null, question: null },
+  });
+  const [connected, setConnected] = useState(false);
 
   const [rows, setRows] = useState({
     '5m': makeDefaultRows(5),
     '15m': makeDefaultRows(5),
     '1hr': makeDefaultRows(5),
   });
+
+  useEffect(() => {
+    let ws;
+    let reconnectTimer;
+
+    function connect() {
+      ws = new WebSocket(SERVER_WS);
+      wsRef.current = ws;
+
+      ws.onopen = () => {
+        setConnected(true);
+        console.log('Connected to AllGreen server');
+      };
+
+      ws.onmessage = (event) => {
+        try {
+          const msg = JSON.parse(event.data);
+          if (msg.type === 'prices') {
+            // Update cache first
+            priceCache.current[msg.tf] = {
+              yesPrice: msg.yesPrice,
+              noPrice: msg.noPrice,
+              question: msg.question,
+            };
+            // Then update state
+            setLiveData(prev => ({
+              ...prev,
+              [msg.tf]: {
+                yesPrice: msg.yesPrice,
+                noPrice: msg.noPrice,
+                question: msg.question,
+              },
+            }));
+          }
+        } catch (e) {}
+      };
+
+      ws.onclose = () => {
+        setConnected(false);
+        // Restore from cache so prices don't disappear during reconnect
+        setLiveData({
+          '5m':  { ...priceCache.current['5m']  },
+          '15m': { ...priceCache.current['15m'] },
+          '1hr': { ...priceCache.current['1hr'] },
+        });
+        reconnectTimer = setTimeout(connect, 3000);
+      };
+
+      ws.onerror = () => { ws.close(); };
+    }
+
+    connect();
+    return () => {
+      clearTimeout(reconnectTimer);
+      if (ws) ws.close();
+    };
+  }, []);
 
   useEffect(() => {
     if (!user) return;
@@ -137,7 +205,7 @@ export default function PairPage({ pair, user, onBack }) {
         if (snap.exists()) {
           const data = snap.data();
           setRows(prev => ({
-            '5m': data['5m'] || prev['5m'],
+            '5m':  data['5m']  || prev['5m'],
             '15m': data['15m'] || prev['15m'],
             '1hr': data['1hr'] || prev['1hr'],
           }));
@@ -164,26 +232,16 @@ export default function PairPage({ pair, user, onBack }) {
 
   const handleSaveRow = async (tf, row) => {
     if (!user) return;
-    setSaveStatus(prev => ({
-      ...prev,
-      [tf]: { ...(prev[tf] || {}), [row.id]: 'saving' },
-    }));
+    setSaveStatus(prev => ({ ...prev, [tf]: { ...(prev[tf] || {}), [row.id]: 'saving' } }));
     try {
       const ref = doc(db, 'parameters', user.uid);
       const currentRows = rows[tf].map(r => r.id === row.id ? row : r);
       const snap = await getDoc(ref);
       const existing = snap.exists() ? snap.data() : {};
       await setDoc(ref, { ...existing, [tf]: currentRows });
-      setSaveStatus(prev => ({
-        ...prev,
-        [tf]: { ...(prev[tf] || {}), [row.id]: 'saved' },
-      }));
+      setSaveStatus(prev => ({ ...prev, [tf]: { ...(prev[tf] || {}), [row.id]: 'saved' } }));
     } catch (e) {
-      console.error('Save failed', e);
-      setSaveStatus(prev => ({
-        ...prev,
-        [tf]: { ...(prev[tf] || {}), [row.id]: 'idle' },
-      }));
+      setSaveStatus(prev => ({ ...prev, [tf]: { ...(prev[tf] || {}), [row.id]: 'idle' } }));
     }
   };
 
@@ -202,6 +260,11 @@ export default function PairPage({ pair, user, onBack }) {
   const totalPnl = allRows.reduce((s, r) => s + r.pnl, 0);
   const bestPnl = Math.max(...allRows.map(r => r.pnl));
   const currentRows = rows[activeTf];
+  const currentLive = liveData[activeTf];
+
+  const formatPrice = (p) => p !== null ? `${(p * 100).toFixed(1)}¢` : null;
+  const yesFormatted = formatPrice(currentLive.yesPrice);
+  const noFormatted = formatPrice(currentLive.noPrice);
 
   if (loading) {
     return (
@@ -217,28 +280,52 @@ export default function PairPage({ pair, user, onBack }) {
 
   return (
     <div style={S.page}>
+      {/* Skeleton pulse keyframe injected once */}
+      <style>{`
+        @keyframes skeleton-pulse {
+          0%, 100% { opacity: 1; }
+          50% { opacity: 0.4; }
+        }
+      `}</style>
+
       <div style={S.topbar}>
         <div style={S.logo}>AllGreen</div>
         <button style={S.backBtn} onClick={onBack}>← Dashboard</button>
       </div>
 
       <div style={S.body}>
+        {/* Live price bar */}
         <div style={S.priceBar}>
           <div>
-            <div style={S.priceLabel}>BTC / USD</div>
-            <div style={S.priceVal}>${price.toLocaleString()}</div>
+            <div style={S.priceLabel}>YES</div>
+            {yesFormatted
+              ? <div style={S.priceGreen}>{yesFormatted}</div>
+              : <div style={S.skeletonPrice} />}
           </div>
           <div>
-            <div style={S.priceLabel}>Change</div>
-            <div style={change >= 0 ? S.priceGreen : S.priceRed}>
-              {change >= 0 ? '+' : ''}{change}
+            <div style={S.priceLabel}>NO</div>
+            {noFormatted
+              ? <div style={S.priceRed}>{noFormatted}</div>
+              : <div style={S.skeletonPrice} />}
+          </div>
+          <div>
+            <div style={S.priceLabel}>Timeframe</div>
+            <div style={{ fontSize: '16px', fontWeight: 700, color: 'var(--text)', fontFamily: 'var(--font-mono)' }}>
+              BTC {activeTf}
             </div>
           </div>
+          {currentLive.question && (
+            <div style={S.question}>{currentLive.question}</div>
+          )}
           <div style={{ marginLeft: 'auto' }}>
-            <div style={S.liveText}><span style={S.liveDot} />Simulated — real data Phase 2</div>
+            <div style={connected ? S.liveText : S.offlineText}>
+              <span style={connected ? S.liveDot : S.offlineDot} />
+              {connected ? 'Live' : 'Connecting...'}
+            </div>
           </div>
         </div>
 
+        {/* Stats */}
         <div style={S.statsGrid}>
           <div style={S.statCard}><div style={S.statLabel}>Active</div><div style={S.statVal}>{activeConfigs}</div></div>
           <div style={S.statCard}><div style={S.statLabel}>Trades</div><div style={S.statVal}>{totalTrades}</div></div>
@@ -256,6 +343,7 @@ export default function PairPage({ pair, user, onBack }) {
           </div>
         </div>
 
+        {/* Timeframe tabs */}
         <div style={S.tfRow}>
           {TIMEFRAMES.map(tf => (
             <button key={tf}
@@ -268,40 +356,16 @@ export default function PairPage({ pair, user, onBack }) {
           </div>
         </div>
 
-        {isMobile ? (
-          <div>
-            {currentRows.map((row, i) => (
-              <ParamRow
-                key={row.id} row={row} index={i} tf={activeTf} isMobile={true}
-                onChange={(id, field, value) => updateRow(activeTf, id, field, value)}
-                onSave={(r) => handleSaveRow(activeTf, r)}
-                saveStatus={saveStatus[activeTf]?.[row.id] || 'idle'}
-              />
-            ))}
-          </div>
-        ) : (
-          <div style={S.tableWrap}>
-            <table style={S.table}>
-              <thead>
-                <tr>
-                  {['#', 'Entry ¢', 'Exit ¢', 'Start (s)', 'Stop (s)', 'On', 'Balance', 'P&L', 'Trades', 'Win%', ''].map((h, i) => (
-                    <th key={i} style={S.th}>{h}</th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {currentRows.map((row, i) => (
-                  <ParamRow
-                    key={row.id} row={row} index={i} tf={activeTf} isMobile={false}
-                    onChange={(id, field, value) => updateRow(activeTf, id, field, value)}
-                    onSave={(r) => handleSaveRow(activeTf, r)}
-                    saveStatus={saveStatus[activeTf]?.[row.id] || 'idle'}
-                  />
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
+        {/* Cards — 2-column grid on desktop, single column on mobile */}
+        <div style={isMobile ? S.cardsMobile : S.cardsGrid}>
+          {currentRows.map((row, i) => (
+            <ParamRow key={row.id} row={row} index={i} tf={activeTf} isMobile={true}
+              onChange={(id, field, value) => updateRow(activeTf, id, field, value)}
+              onSave={(r) => handleSaveRow(activeTf, r)}
+              saveStatus={saveStatus[activeTf]?.[row.id] || 'idle'}
+            />
+          ))}
+        </div>
 
         {currentRows.length < MAX_ROWS && (
           <button style={S.addBtn}

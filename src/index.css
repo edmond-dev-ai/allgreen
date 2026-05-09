@@ -57,3 +57,9 @@ input, button, select, textarea { font-family: inherit; }
 .fade-up-3 { animation: fadeUp 0.45s 0.2s ease both; }
 .fade-up-4 { animation: fadeUp 0.45s 0.28s ease both; }
 .fade-up-5 { animation: fadeUp 0.45s 0.36s ease both; }
+
+input[type=number]::-webkit-outer-spin-button,
+input[type=number]::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
