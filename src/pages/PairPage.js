@@ -1,0 +1,318 @@
+import React, { useState, useEffect } from 'react';
+import { doc, setDoc, getDoc } from 'firebase/firestore';
+import { db } from '../firebase';
+import ParamRow from '../components/ParamRow';
+import { makeRow, makeDefaultRows, TIMEFRAMES, TF_SECONDS } from '../utils';
+
+const S = {
+  page: { minHeight: '100vh', background: 'var(--bg)' },
+  topbar: {
+    display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+    padding: '1rem 1.25rem',
+    borderBottom: '1px solid var(--border)',
+    background: 'var(--bg2)',
+  },
+  logo: { fontSize: '18px', fontWeight: 800, color: 'var(--green)', letterSpacing: '-0.02em' },
+  backBtn: {
+    background: 'none', border: '1px solid var(--border2)',
+    borderRadius: '7px', color: 'var(--text2)',
+    fontSize: '12px', padding: '5px 12px', cursor: 'pointer',
+    fontFamily: 'var(--font-display)',
+  },
+  body: { padding: '1rem 1.25rem' },
+  priceBar: {
+    display: 'flex', alignItems: 'center', gap: '1rem',
+    background: 'var(--bg2)', border: '1px solid var(--border)',
+    borderRadius: '12px', padding: '0.85rem 1rem',
+    marginBottom: '1rem', flexWrap: 'wrap',
+  },
+  priceLabel: { fontSize: '10px', color: 'var(--text3)', fontFamily: 'var(--font-mono)', marginBottom: '2px' },
+  priceVal: { fontSize: '16px', fontWeight: 700, color: 'var(--text)', fontFamily: 'var(--font-mono)', letterSpacing: '-0.02em' },
+  priceGreen: { fontSize: '13px', fontWeight: 600, color: 'var(--green)', fontFamily: 'var(--font-mono)' },
+  priceRed: { fontSize: '13px', fontWeight: 600, color: 'var(--red)', fontFamily: 'var(--font-mono)' },
+  liveDot: {
+    width: '7px', height: '7px', borderRadius: '50%',
+    background: 'var(--green)', display: 'inline-block',
+    animation: 'pulse-dot 2s infinite', marginRight: '5px',
+  },
+  liveText: { fontSize: '11px', color: 'var(--green)', fontFamily: 'var(--font-mono)', display: 'flex', alignItems: 'center' },
+  statsGrid: {
+    display: 'grid',
+    gridTemplateColumns: 'repeat(auto-fill, minmax(120px, 1fr))',
+    gap: '8px', marginBottom: '1rem',
+  },
+  statCard: {
+    background: 'var(--bg2)', border: '1px solid var(--border)',
+    borderRadius: '10px', padding: '0.75rem 0.875rem',
+  },
+  statLabel: { fontSize: '10px', color: 'var(--text3)', fontFamily: 'var(--font-mono)', marginBottom: '4px' },
+  statVal: { fontSize: '18px', fontWeight: 700, color: 'var(--text)', letterSpacing: '-0.02em' },
+  statGreen: { fontSize: '18px', fontWeight: 700, color: 'var(--green)', letterSpacing: '-0.02em' },
+  tfRow: { display: 'flex', gap: '6px', marginBottom: '1rem', alignItems: 'center', flexWrap: 'wrap' },
+  tfTab: {
+    padding: '6px 16px', fontSize: '13px', fontWeight: 500,
+    border: '1px solid var(--border2)', borderRadius: '8px',
+    background: 'var(--bg2)', color: 'var(--text2)', cursor: 'pointer',
+    fontFamily: 'var(--font-display)', transition: 'all 0.15s',
+  },
+  tfTabActive: {
+    padding: '6px 16px', fontSize: '13px', fontWeight: 700,
+    border: '1px solid var(--green)', borderRadius: '8px',
+    background: 'rgba(0,255,135,0.1)', color: 'var(--green)', cursor: 'pointer',
+    fontFamily: 'var(--font-display)',
+  },
+  tfHint: { fontSize: '11px', color: 'var(--text3)', fontFamily: 'var(--font-mono)', marginLeft: 'auto' },
+  tableWrap: {
+    background: 'var(--bg2)', border: '1px solid var(--border)',
+    borderRadius: '14px', overflowX: 'auto', marginBottom: '8px',
+  },
+  table: { width: '100%', borderCollapse: 'collapse', fontSize: '13px' },
+  th: {
+    fontSize: '10px', fontWeight: 500, color: 'var(--text3)',
+    textAlign: 'left', padding: '9px 8px',
+    borderBottom: '1px solid var(--border)',
+    background: 'var(--bg3)', whiteSpace: 'nowrap',
+    fontFamily: 'var(--font-mono)', textTransform: 'uppercase', letterSpacing: '0.05em',
+  },
+  addBtn: {
+    width: '100%', padding: '8px',
+    background: 'none', border: '1px dashed var(--border2)',
+    borderRadius: '10px', color: 'var(--text3)',
+    fontSize: '12px', cursor: 'pointer',
+    fontFamily: 'var(--font-display)', transition: 'all 0.15s',
+  },
+  loadingText: {
+    textAlign: 'center', padding: '2rem',
+    color: 'var(--text3)', fontFamily: 'var(--font-mono)', fontSize: '13px',
+  },
+};
+
+const MAX_ROWS = 10;
+
+function useFakePrice() {
+  const [price, setPrice] = useState(94230.5);
+  const [change, setChange] = useState(0);
+  useEffect(() => {
+    const id = setInterval(() => {
+      setPrice(p => {
+        const delta = parseFloat(((Math.random() - 0.5) * 120).toFixed(2));
+        setChange(delta);
+        return parseFloat((p + delta).toFixed(2));
+      });
+    }, 2000);
+    return () => clearInterval(id);
+  }, []);
+  return { price, change };
+}
+
+function useIsMobile() {
+  const [isMobile, setIsMobile] = useState(window.innerWidth < 700);
+  useEffect(() => {
+    const handler = () => setIsMobile(window.innerWidth < 700);
+    window.addEventListener('resize', handler);
+    return () => window.removeEventListener('resize', handler);
+  }, []);
+  return isMobile;
+}
+
+export default function PairPage({ pair, user, onBack }) {
+  const [activeTf, setActiveTf] = useState('5m');
+  const { price, change } = useFakePrice();
+  const isMobile = useIsMobile();
+  const [loading, setLoading] = useState(true);
+  const [saveStatus, setSaveStatus] = useState({});
+
+  const [rows, setRows] = useState({
+    '5m': makeDefaultRows(5),
+    '15m': makeDefaultRows(5),
+    '1hr': makeDefaultRows(5),
+  });
+
+  useEffect(() => {
+    if (!user) return;
+    const load = async () => {
+      try {
+        const ref = doc(db, 'parameters', user.uid);
+        const snap = await getDoc(ref);
+        if (snap.exists()) {
+          const data = snap.data();
+          setRows(prev => ({
+            '5m': data['5m'] || prev['5m'],
+            '15m': data['15m'] || prev['15m'],
+            '1hr': data['1hr'] || prev['1hr'],
+          }));
+        }
+      } catch (e) {
+        console.error('Failed to load parameters', e);
+      } finally {
+        setLoading(false);
+      }
+    };
+    load();
+  }, [user]);
+
+  const updateRow = (tf, id, field, value) => {
+    setRows(prev => ({
+      ...prev,
+      [tf]: prev[tf].map(r => r.id === id ? { ...r, [field]: value } : r),
+    }));
+    setSaveStatus(prev => ({
+      ...prev,
+      [tf]: { ...(prev[tf] || {}), [id]: 'idle' },
+    }));
+  };
+
+  const handleSaveRow = async (tf, row) => {
+    if (!user) return;
+    setSaveStatus(prev => ({
+      ...prev,
+      [tf]: { ...(prev[tf] || {}), [row.id]: 'saving' },
+    }));
+    try {
+      const ref = doc(db, 'parameters', user.uid);
+      const currentRows = rows[tf].map(r => r.id === row.id ? row : r);
+      const snap = await getDoc(ref);
+      const existing = snap.exists() ? snap.data() : {};
+      await setDoc(ref, { ...existing, [tf]: currentRows });
+      setSaveStatus(prev => ({
+        ...prev,
+        [tf]: { ...(prev[tf] || {}), [row.id]: 'saved' },
+      }));
+    } catch (e) {
+      console.error('Save failed', e);
+      setSaveStatus(prev => ({
+        ...prev,
+        [tf]: { ...(prev[tf] || {}), [row.id]: 'idle' },
+      }));
+    }
+  };
+
+  const addRow = (tf) => {
+    setRows(prev => {
+      const existing = prev[tf];
+      if (existing.length >= MAX_ROWS) return prev;
+      const newId = Math.max(...existing.map(r => r.id)) + 1;
+      return { ...prev, [tf]: [...existing, makeRow(newId)] };
+    });
+  };
+
+  const allRows = Object.values(rows).flat();
+  const activeConfigs = allRows.filter(r => r.enabled).length;
+  const totalTrades = allRows.reduce((s, r) => s + r.trades, 0);
+  const totalPnl = allRows.reduce((s, r) => s + r.pnl, 0);
+  const bestPnl = Math.max(...allRows.map(r => r.pnl));
+  const currentRows = rows[activeTf];
+
+  if (loading) {
+    return (
+      <div style={S.page}>
+        <div style={S.topbar}>
+          <div style={S.logo}>AllGreen</div>
+          <button style={S.backBtn} onClick={onBack}>← Dashboard</button>
+        </div>
+        <div style={S.loadingText}>Loading your parameters...</div>
+      </div>
+    );
+  }
+
+  return (
+    <div style={S.page}>
+      <div style={S.topbar}>
+        <div style={S.logo}>AllGreen</div>
+        <button style={S.backBtn} onClick={onBack}>← Dashboard</button>
+      </div>
+
+      <div style={S.body}>
+        <div style={S.priceBar}>
+          <div>
+            <div style={S.priceLabel}>BTC / USD</div>
+            <div style={S.priceVal}>${price.toLocaleString()}</div>
+          </div>
+          <div>
+            <div style={S.priceLabel}>Change</div>
+            <div style={change >= 0 ? S.priceGreen : S.priceRed}>
+              {change >= 0 ? '+' : ''}{change}
+            </div>
+          </div>
+          <div style={{ marginLeft: 'auto' }}>
+            <div style={S.liveText}><span style={S.liveDot} />Simulated — real data Phase 2</div>
+          </div>
+        </div>
+
+        <div style={S.statsGrid}>
+          <div style={S.statCard}><div style={S.statLabel}>Active</div><div style={S.statVal}>{activeConfigs}</div></div>
+          <div style={S.statCard}><div style={S.statLabel}>Trades</div><div style={S.statVal}>{totalTrades}</div></div>
+          <div style={S.statCard}>
+            <div style={S.statLabel}>Total P&amp;L</div>
+            <div style={totalPnl >= 0 ? S.statGreen : { ...S.statVal, color: 'var(--red)' }}>
+              {totalPnl === 0 ? '—' : (totalPnl > 0 ? '+' : '') + '$' + totalPnl.toFixed(2)}
+            </div>
+          </div>
+          <div style={S.statCard}>
+            <div style={S.statLabel}>Best P&amp;L</div>
+            <div style={bestPnl > 0 ? S.statGreen : S.statVal}>
+              {bestPnl <= 0 ? '—' : '+$' + bestPnl.toFixed(2)}
+            </div>
+          </div>
+        </div>
+
+        <div style={S.tfRow}>
+          {TIMEFRAMES.map(tf => (
+            <button key={tf}
+              style={activeTf === tf ? S.tfTabActive : S.tfTab}
+              onClick={() => setActiveTf(tf)}
+            >{tf}</button>
+          ))}
+          <div style={S.tfHint}>
+            Max {TF_SECONDS[activeTf] - 1}s &nbsp;|&nbsp; {currentRows.length}/{MAX_ROWS}
+          </div>
+        </div>
+
+        {isMobile ? (
+          <div>
+            {currentRows.map((row, i) => (
+              <ParamRow
+                key={row.id} row={row} index={i} tf={activeTf} isMobile={true}
+                onChange={(id, field, value) => updateRow(activeTf, id, field, value)}
+                onSave={(r) => handleSaveRow(activeTf, r)}
+                saveStatus={saveStatus[activeTf]?.[row.id] || 'idle'}
+              />
+            ))}
+          </div>
+        ) : (
+          <div style={S.tableWrap}>
+            <table style={S.table}>
+              <thead>
+                <tr>
+                  {['#', 'Entry ¢', 'Exit ¢', 'Start (s)', 'Stop (s)', 'On', 'Balance', 'P&L', 'Trades', 'Win%', ''].map((h, i) => (
+                    <th key={i} style={S.th}>{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {currentRows.map((row, i) => (
+                  <ParamRow
+                    key={row.id} row={row} index={i} tf={activeTf} isMobile={false}
+                    onChange={(id, field, value) => updateRow(activeTf, id, field, value)}
+                    onSave={(r) => handleSaveRow(activeTf, r)}
+                    saveStatus={saveStatus[activeTf]?.[row.id] || 'idle'}
+                  />
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+
+        {currentRows.length < MAX_ROWS && (
+          <button style={S.addBtn}
+            onMouseEnter={e => e.target.style.borderColor = 'var(--text3)'}
+            onMouseLeave={e => e.target.style.borderColor = 'var(--border2)'}
+            onClick={() => addRow(activeTf)}
+          >
+            + Add parameter row
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}
