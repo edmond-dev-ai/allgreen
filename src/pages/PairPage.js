@@ -4,7 +4,7 @@ import { db } from '../firebase';
 import ParamRow from '../components/ParamRow';
 import { makeRow, makeDefaultRows, TIMEFRAMES, TF_SECONDS } from '../utils';
 
-const SERVER_WS = process.env.REACT_APP_SERVER_WS || 'ws://localhost:3001';
+const SERVER_WS = process.env.REACT_APP_SERVER_WS || 'ws://localhost:3001/ws';
 
 const S = {
   page: { minHeight: '100vh', background: 'var(--bg)' },
@@ -112,6 +112,13 @@ function useIsMobile() {
   return isMobile;
 }
 
+const EMPTY_LIVE = {
+  '5m':  { yesPrice: null, noPrice: null, question: null },
+  '15m': { yesPrice: null, noPrice: null, question: null },
+  '1hr': { yesPrice: null, noPrice: null, question: null },
+  '4hr': { yesPrice: null, noPrice: null, question: null },
+};
+
 export default function PairPage({ pair, user, onBack }) {
   const [activeTf, setActiveTf] = useState('5m');
   const isMobile = useIsMobile();
@@ -119,24 +126,21 @@ export default function PairPage({ pair, user, onBack }) {
   const [saveStatus, setSaveStatus] = useState({});
   const wsRef = useRef(null);
 
-  // Keep last known prices in a ref so reconnects don't wipe them
   const priceCache = useRef({
     '5m':  { yesPrice: null, noPrice: null, question: null },
     '15m': { yesPrice: null, noPrice: null, question: null },
     '1hr': { yesPrice: null, noPrice: null, question: null },
+    '4hr': { yesPrice: null, noPrice: null, question: null },
   });
 
-  const [liveData, setLiveData] = useState({
-    '5m':  { yesPrice: null, noPrice: null, question: null },
-    '15m': { yesPrice: null, noPrice: null, question: null },
-    '1hr': { yesPrice: null, noPrice: null, question: null },
-  });
+  const [liveData, setLiveData] = useState({ ...EMPTY_LIVE });
   const [connected, setConnected] = useState(false);
 
   const [rows, setRows] = useState({
-    '5m': makeDefaultRows(5),
+    '5m':  makeDefaultRows(5),
     '15m': makeDefaultRows(5),
     '1hr': makeDefaultRows(5),
+    '4hr': makeDefaultRows(5),
   });
 
   useEffect(() => {
@@ -156,13 +160,11 @@ export default function PairPage({ pair, user, onBack }) {
         try {
           const msg = JSON.parse(event.data);
           if (msg.type === 'prices') {
-            // Update cache first
             priceCache.current[msg.tf] = {
               yesPrice: msg.yesPrice,
               noPrice: msg.noPrice,
               question: msg.question,
             };
-            // Then update state
             setLiveData(prev => ({
               ...prev,
               [msg.tf]: {
@@ -177,11 +179,11 @@ export default function PairPage({ pair, user, onBack }) {
 
       ws.onclose = () => {
         setConnected(false);
-        // Restore from cache so prices don't disappear during reconnect
         setLiveData({
           '5m':  { ...priceCache.current['5m']  },
           '15m': { ...priceCache.current['15m'] },
           '1hr': { ...priceCache.current['1hr'] },
+          '4hr': { ...priceCache.current['4hr'] },
         });
         reconnectTimer = setTimeout(connect, 3000);
       };
@@ -208,6 +210,7 @@ export default function PairPage({ pair, user, onBack }) {
             '5m':  data['5m']  || prev['5m'],
             '15m': data['15m'] || prev['15m'],
             '1hr': data['1hr'] || prev['1hr'],
+            '4hr': data['4hr'] || prev['4hr'],
           }));
         }
       } catch (e) {
@@ -280,11 +283,14 @@ export default function PairPage({ pair, user, onBack }) {
 
   return (
     <div style={S.page}>
-      {/* Skeleton pulse keyframe injected once */}
       <style>{`
         @keyframes skeleton-pulse {
           0%, 100% { opacity: 1; }
           50% { opacity: 0.4; }
+        }
+        @keyframes pulse-dot {
+          0%, 100% { opacity: 1; }
+          50% { opacity: 0.3; }
         }
       `}</style>
 
@@ -294,7 +300,6 @@ export default function PairPage({ pair, user, onBack }) {
       </div>
 
       <div style={S.body}>
-        {/* Live price bar */}
         <div style={S.priceBar}>
           <div>
             <div style={S.priceLabel}>YES</div>
@@ -325,7 +330,6 @@ export default function PairPage({ pair, user, onBack }) {
           </div>
         </div>
 
-        {/* Stats */}
         <div style={S.statsGrid}>
           <div style={S.statCard}><div style={S.statLabel}>Active</div><div style={S.statVal}>{activeConfigs}</div></div>
           <div style={S.statCard}><div style={S.statLabel}>Trades</div><div style={S.statVal}>{totalTrades}</div></div>
@@ -343,7 +347,6 @@ export default function PairPage({ pair, user, onBack }) {
           </div>
         </div>
 
-        {/* Timeframe tabs */}
         <div style={S.tfRow}>
           {TIMEFRAMES.map(tf => (
             <button key={tf}
@@ -356,7 +359,6 @@ export default function PairPage({ pair, user, onBack }) {
           </div>
         </div>
 
-        {/* Cards — 2-column grid on desktop, single column on mobile */}
         <div style={isMobile ? S.cardsMobile : S.cardsGrid}>
           {currentRows.map((row, i) => (
             <ParamRow key={row.id} row={row} index={i} tf={activeTf} isMobile={true}

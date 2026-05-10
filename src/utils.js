@@ -1,9 +1,10 @@
-export const TIMEFRAMES = ['5m', '15m', '1hr'];
+export const TIMEFRAMES = ['5m', '15m', '1hr', '4hr'];
 
 export const TF_SECONDS = {
   '5m': 300,
   '15m': 900,
   '1hr': 3600,
+  '4hr': 14400,
 };
 
 export function makeRow(id) {

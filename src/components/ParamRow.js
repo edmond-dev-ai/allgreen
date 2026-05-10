@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React from 'react';
 import { TF_SECONDS, clampSec } from '../utils';
 
 const S = {
@@ -36,13 +36,6 @@ const S = {
     flexWrap: 'wrap',
     marginTop: '0.5rem',
   },
-  mobileFooter: {
-    display: 'flex', alignItems: 'center',
-    justifyContent: 'space-between',
-    marginTop: '0.75rem',
-    paddingTop: '0.75rem',
-    borderTop: '1px solid var(--border)',
-  },
   saveBtn: {
     padding: '4px 10px',
     background: 'transparent',
@@ -71,7 +64,6 @@ const S = {
   pnlZero: { fontSize: '12px', color: 'var(--text3)', fontFamily: 'var(--font-mono)' },
 };
 
-// Stepper: value display with + and - buttons
 function Stepper({ value, min, max, step = 1, onChange, label }) {
   const numVal = parseFloat(value) || 0;
 
@@ -83,6 +75,16 @@ function Stepper({ value, min, max, step = 1, onChange, label }) {
   const increment = () => {
     const next = Math.min(max, numVal + step);
     onChange(next);
+  };
+
+  const handleInput = (e) => {
+    const raw = e.target.value;
+    const n = parseFloat(raw);
+    if (!isNaN(n)) {
+      onChange(Math.min(max, Math.max(min, n)));
+    } else {
+      onChange(raw);
+    }
   };
 
   return (
@@ -101,8 +103,7 @@ function Stepper({ value, min, max, step = 1, onChange, label }) {
           color: 'var(--text2)', fontSize: '16px',
           cursor: 'pointer', display: 'flex',
           alignItems: 'center', justifyContent: 'center',
-          flexShrink: 0,
-          transition: 'background 0.15s',
+          flexShrink: 0, transition: 'background 0.15s',
         }}
           onMouseEnter={e => e.currentTarget.style.background = 'var(--bg4)'}
           onMouseLeave={e => e.currentTarget.style.background = 'var(--bg3)'}
@@ -112,7 +113,7 @@ function Stepper({ value, min, max, step = 1, onChange, label }) {
           value={value}
           min={min}
           max={max}
-          onChange={e => onChange(e.target.value)}
+          onChange={handleInput}
           style={{
             flex: 1, border: 'none', background: 'transparent',
             color: 'var(--text)', fontSize: '13px',
@@ -120,6 +121,7 @@ function Stepper({ value, min, max, step = 1, onChange, label }) {
             fontFamily: 'var(--font-mono)',
             padding: '0',
             MozAppearance: 'textfield',
+            WebkitAppearance: 'none',
           }}
         />
         <button onClick={increment} style={{
@@ -129,8 +131,7 @@ function Stepper({ value, min, max, step = 1, onChange, label }) {
           color: 'var(--bg)', fontSize: '16px',
           cursor: 'pointer', display: 'flex',
           alignItems: 'center', justifyContent: 'center',
-          flexShrink: 0,
-          fontWeight: 700,
+          flexShrink: 0, fontWeight: 700,
           transition: 'background 0.15s',
         }}
           onMouseEnter={e => e.currentTarget.style.background = 'var(--green-dark)'}
@@ -169,22 +170,26 @@ export default function ParamRow({ row, index, tf, onChange, onSave, saveStatus 
 
       <div style={S.mobileGrid}>
         <Stepper
-          label="Entry (¢)" value={row.entryPrice}
+          label="Entry (¢) max 99"
+          value={row.entryPrice}
           min={1} max={99} step={1}
           onChange={val => update('entryPrice', val)}
         />
         <Stepper
-          label="Exit (¢)" value={row.exitPrice}
+          label="Exit (¢) max 99"
+          value={row.exitPrice}
           min={1} max={99} step={1}
           onChange={val => update('exitPrice', val)}
         />
         <Stepper
-          label={`Start (s) max ${maxSec}`} value={row.startSec}
+          label={`Start (s) max ${maxSec}`}
+          value={row.startSec}
           min={1} max={maxSec} step={1}
           onChange={val => update('startSec', clampSec(val, tf))}
         />
         <Stepper
-          label={`Stop (s) max ${maxSec}`} value={row.stopSec}
+          label={`Stop (s) max ${maxSec}`}
+          value={row.stopSec}
           min={1} max={maxSec} step={1}
           onChange={val => update('stopSec', clampSec(val, tf))}
         />
