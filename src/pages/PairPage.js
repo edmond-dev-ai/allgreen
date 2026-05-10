@@ -98,9 +98,57 @@ const S = {
     borderRadius: '6px',
     animation: 'skeleton-pulse 1.5s ease-in-out infinite',
   },
+  countdown: {
+    fontSize: '20px', fontWeight: 700,
+    fontFamily: 'var(--font-mono)',
+    letterSpacing: '0.04em',
+  },
+  countdownUrgent: {
+    fontSize: '20px', fontWeight: 700,
+    fontFamily: 'var(--font-mono)',
+    letterSpacing: '0.04em',
+    color: 'var(--red)',
+  },
 };
 
 const MAX_ROWS = 10;
+
+// Returns remaining seconds in the current window, synced to real clock time
+function getRemainingSeconds(tf) {
+  const total = TF_SECONDS[tf];
+  const nowSec = Math.floor(Date.now() / 1000);
+  const elapsed = nowSec % total;
+  return total - elapsed;
+}
+
+// Format seconds into MM:SS or H:MM:SS
+function formatCountdown(secs, tf) {
+  if (tf === '4hr') {
+    const h = Math.floor(secs / 3600);
+    const m = Math.floor((secs % 3600) / 60);
+    const s = secs % 60;
+    return `${h}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
+  }
+  const m = Math.floor(secs / 60);
+  const s = secs % 60;
+  return `${m}:${String(s).padStart(2, '0')}`;
+}
+
+function useCountdown(tf) {
+  const [remaining, setRemaining] = useState(() => getRemainingSeconds(tf));
+
+  useEffect(() => {
+    setRemaining(getRemainingSeconds(tf));
+
+    const interval = setInterval(() => {
+      setRemaining(getRemainingSeconds(tf));
+    }, 1000);
+
+    return () => clearInterval(interval);
+  }, [tf]);
+
+  return remaining;
+}
 
 function useIsMobile() {
   const [isMobile, setIsMobile] = useState(window.innerWidth < 700);
@@ -142,6 +190,11 @@ export default function PairPage({ pair, user, onBack }) {
     '1hr': makeDefaultRows(5),
     '4hr': makeDefaultRows(5),
   });
+
+  // Countdown for active timeframe
+  const remaining = useCountdown(activeTf);
+  const total = TF_SECONDS[activeTf];
+  const isUrgent = remaining <= 30;
 
   useEffect(() => {
     let ws;
@@ -317,6 +370,12 @@ export default function PairPage({ pair, user, onBack }) {
             <div style={S.priceLabel}>Timeframe</div>
             <div style={{ fontSize: '16px', fontWeight: 700, color: 'var(--text)', fontFamily: 'var(--font-mono)' }}>
               BTC {activeTf}
+            </div>
+          </div>
+          <div>
+            <div style={S.priceLabel}>Time Left</div>
+            <div style={isUrgent ? S.countdownUrgent : S.countdown}>
+              {formatCountdown(remaining, activeTf)}
             </div>
           </div>
           {currentLive.question && (
