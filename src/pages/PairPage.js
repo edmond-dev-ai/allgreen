@@ -113,7 +113,6 @@ const S = {
 
 const MAX_ROWS = 10;
 
-// Returns remaining seconds in the current window, synced to real clock time
 function getRemainingSeconds(tf) {
   const total = TF_SECONDS[tf];
   const nowSec = Math.floor(Date.now() / 1000);
@@ -121,7 +120,6 @@ function getRemainingSeconds(tf) {
   return total - elapsed;
 }
 
-// Format seconds into MM:SS or H:MM:SS
 function formatCountdown(secs, tf) {
   if (tf === '4hr') {
     const h = Math.floor(secs / 3600);
@@ -136,17 +134,13 @@ function formatCountdown(secs, tf) {
 
 function useCountdown(tf) {
   const [remaining, setRemaining] = useState(() => getRemainingSeconds(tf));
-
   useEffect(() => {
     setRemaining(getRemainingSeconds(tf));
-
     const interval = setInterval(() => {
       setRemaining(getRemainingSeconds(tf));
     }, 1000);
-
     return () => clearInterval(interval);
   }, [tf]);
-
   return remaining;
 }
 
@@ -191,11 +185,10 @@ export default function PairPage({ pair, user, onBack }) {
     '4hr': makeDefaultRows(5),
   });
 
-  // Countdown for active timeframe
   const remaining = useCountdown(activeTf);
-  const total = TF_SECONDS[activeTf];
-  const isUrgent = remaining <= 30;
+  const isUrgent  = remaining <= 30;
 
+  // ── WebSocket — prices + sim_update ──────────────────────────────────────
   useEffect(() => {
     let ws;
     let reconnectTimer;
@@ -212,21 +205,31 @@ export default function PairPage({ pair, user, onBack }) {
       ws.onmessage = (event) => {
         try {
           const msg = JSON.parse(event.data);
+
           if (msg.type === 'prices') {
             priceCache.current[msg.tf] = {
               yesPrice: msg.yesPrice,
-              noPrice: msg.noPrice,
+              noPrice:  msg.noPrice,
               question: msg.question,
             };
             setLiveData(prev => ({
               ...prev,
               [msg.tf]: {
                 yesPrice: msg.yesPrice,
-                noPrice: msg.noPrice,
+                noPrice:  msg.noPrice,
                 question: msg.question,
               },
             }));
           }
+
+          // Backend pushed updated row stats after a trade
+          if (msg.type === 'sim_update' && user && msg.uid === user.uid) {
+            setRows(prev => ({
+              ...prev,
+              [msg.tf]: msg.rows,
+            }));
+          }
+
         } catch (e) {}
       };
 
@@ -249,13 +252,14 @@ export default function PairPage({ pair, user, onBack }) {
       clearTimeout(reconnectTimer);
       if (ws) ws.close();
     };
-  }, []);
+  }, [user]);
 
+  // ── Load rows from Firestore on mount ────────────────────────────────────
   useEffect(() => {
     if (!user) return;
     const load = async () => {
       try {
-        const ref = doc(db, 'parameters', user.uid);
+        const ref  = doc(db, 'parameters', user.uid);
         const snap = await getDoc(ref);
         if (snap.exists()) {
           const data = snap.data();
@@ -290,10 +294,10 @@ export default function PairPage({ pair, user, onBack }) {
     if (!user) return;
     setSaveStatus(prev => ({ ...prev, [tf]: { ...(prev[tf] || {}), [row.id]: 'saving' } }));
     try {
-      const ref = doc(db, 'parameters', user.uid);
+      const ref        = doc(db, 'parameters', user.uid);
       const currentRows = rows[tf].map(r => r.id === row.id ? row : r);
-      const snap = await getDoc(ref);
-      const existing = snap.exists() ? snap.data() : {};
+      const snap       = await getDoc(ref);
+      const existing   = snap.exists() ? snap.data() : {};
       await setDoc(ref, { ...existing, [tf]: currentRows });
       setSaveStatus(prev => ({ ...prev, [tf]: { ...(prev[tf] || {}), [row.id]: 'saved' } }));
     } catch (e) {
@@ -310,17 +314,17 @@ export default function PairPage({ pair, user, onBack }) {
     });
   };
 
-  const allRows = Object.values(rows).flat();
+  const allRows       = Object.values(rows).flat();
   const activeConfigs = allRows.filter(r => r.enabled).length;
-  const totalTrades = allRows.reduce((s, r) => s + r.trades, 0);
-  const totalPnl = allRows.reduce((s, r) => s + r.pnl, 0);
-  const bestPnl = Math.max(...allRows.map(r => r.pnl));
-  const currentRows = rows[activeTf];
-  const currentLive = liveData[activeTf];
+  const totalTrades   = allRows.reduce((s, r) => s + r.trades, 0);
+  const totalPnl      = allRows.reduce((s, r) => s + r.pnl, 0);
+  const bestPnl       = Math.max(...allRows.map(r => r.pnl));
+  const currentRows   = rows[activeTf];
+  const currentLive   = liveData[activeTf];
 
-  const formatPrice = (p) => p !== null ? `${(p * 100).toFixed(1)}¢` : null;
+  const formatPrice  = (p) => p !== null ? `${(p * 100).toFixed(1)}¢` : null;
   const yesFormatted = formatPrice(currentLive.yesPrice);
-  const noFormatted = formatPrice(currentLive.noPrice);
+  const noFormatted  = formatPrice(currentLive.noPrice);
 
   if (loading) {
     return (
